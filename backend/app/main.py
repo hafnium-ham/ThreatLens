@@ -1,0 +1,175 @@
+import asyncio
+from contextlib import asynccontextmanager, suppress
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from .agent import ThreatLensAgent
+from .ai import ThreatTriageAI
+from .collectors import ThreatCollectors
+from .config import get_settings
+from .database import ClickHouse
+from .models import ThreatEvent
+from .observability import LangfuseTracer
+from .repo_scanner import RepoScanner, ScanHub, seed_repo_demo_data
+from .seed import seed_demo_data
+
+
+class FeedHub:
+    def __init__(self):
+        self.connections: set[WebSocket] = set()
+
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self.connections.add(websocket)
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        self.connections.discard(websocket)
+
+    async def broadcast(self, event: ThreatEvent) -> None:
+        stale: list[WebSocket] = []
+        for websocket in self.connections:
+            try:
+                await websocket.send_json(event.model_dump(mode="json"))
+            except Exception:
+                stale.append(websocket)
+        for websocket in stale:
+            self.disconnect(websocket)
+
+
+settings = get_settings()
+hub = FeedHub()
+scan_hub = ScanHub()
+db = ClickHouse(settings)
+tracer = LangfuseTracer(settings)
+ai = ThreatTriageAI(settings, tracer)
+collectors = ThreatCollectors(settings)
+agent = ThreatLensAgent(db, collectors, ai, tracer, settings.groq_model, hub.broadcast)
+repo_scanner = RepoScanner(settings, db, tracer, scan_hub)
+scheduler = AsyncIOScheduler(timezone="UTC")
+
+
+class GitHubScanRequest(BaseModel):
+    username: str
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.connect()
+    seed_demo_data(db)
+    seed_repo_demo_data(db)
+    scheduler.add_job(agent.run_once, "interval", minutes=settings.agent_interval_minutes, id="threatlens-agent")
+    scheduler.start()
+    asyncio.create_task(agent.run_once())
+    yield
+    scheduler.shutdown(wait=False)
+    tracer.flush()
+
+
+app = FastAPI(title="ThreatLens API", version="1.0.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.frontend_origin, "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok", "service": "ThreatLens"}
+
+
+@app.get("/threats")
+def get_threats(limit: int = Query(50, ge=1, le=500), severity_min: int = Query(1, ge=1, le=10)):
+    return {"items": db.recent_threats(limit=limit, severity_min=severity_min)}
+
+
+@app.get("/analytics/summary")
+def analytics_summary():
+    return db.analytics_summary()
+
+
+@app.get("/agent/runs")
+def get_agent_runs(limit: int = Query(50, ge=1, le=200)):
+    return {"items": db.agent_runs(limit=limit), "langfuse_host": settings.langfuse_project_url}
+
+
+@app.get("/agent/status")
+def agent_status():
+    return {
+        "running": agent._lock.locked(),
+        "model": settings.groq_model,
+        "interval_minutes": settings.agent_interval_minutes,
+    }
+
+
+@app.post("/agent/trigger")
+async def trigger_agent():
+    if agent._lock.locked():
+        raise HTTPException(status_code=409, detail="Agent run already in progress")
+    run = await agent.run_once()
+    return run.model_dump(mode="json")
+
+
+@app.get("/cves")
+def get_cves(search: str = "", limit: int = Query(50, ge=1, le=200)):
+    return {"items": db.search_cves(search=search, limit=limit)}
+
+
+@app.post("/scan/github")
+async def scan_github(payload: GitHubScanRequest):
+    if not payload.username.strip():
+        raise HTTPException(status_code=400, detail="username is required")
+    return await repo_scanner.start_scan(payload.username)
+
+
+@app.get("/scan/status/{scan_id}")
+def scan_status(scan_id: str):
+    status = repo_scanner.status.get(scan_id) or db.repo_scan_status(scan_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="scan not found")
+    return status
+
+
+@app.get("/repos/{username}")
+def repos(username: str):
+    return {"items": db.repos_for_user(username), "analytics": db.repo_analytics(username)}
+
+
+@app.get("/repos/{username}/{repo_name}/vulns")
+def repo_vulns(username: str, repo_name: str):
+    return {"items": db.repo_vulns(username, repo_name)}
+
+
+@app.get("/feed/live")
+def live_vuln_feed(limit: int = Query(100, ge=1, le=500)):
+    return {"items": db.latest_repo_vulns(limit=limit)}
+
+
+@app.websocket("/ws/feed")
+async def websocket_feed(websocket: WebSocket):
+    await hub.connect(websocket)
+    with suppress(Exception):
+        await websocket.send_json({"type": "hello", "message": "ThreatLens live feed connected"})
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        hub.disconnect(websocket)
+
+
+@app.websocket("/ws/scan/{scan_id}")
+async def websocket_scan(scan_id: str, websocket: WebSocket):
+    await scan_hub.connect(scan_id, websocket)
+    with suppress(Exception):
+        status = repo_scanner.status.get(scan_id) or db.repo_scan_status(scan_id)
+        await websocket.send_json({"type": "hello", "scan_id": scan_id, "status": status})
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        scan_hub.disconnect(scan_id, websocket)
