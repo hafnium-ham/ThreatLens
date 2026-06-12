@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     clickhouse_port: int = 8443
     clickhouse_database: str = Field(default="default", validation_alias=AliasChoices("CLICKHOUSE_DB", "CLICKHOUSE_DATABASE"))
     clickhouse_user: str = "default"
-    clickhouse_password: str = ".GTexzm1mE8z5"
+    clickhouse_password: str = ""
     clickhouse_secure: bool = True
     frontend_origin: str = "http://localhost:5173"
     agent_interval_minutes: int = Field(default=5, ge=1)

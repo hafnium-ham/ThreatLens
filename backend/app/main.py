@@ -87,6 +87,12 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "ThreatLens"}
 
 
+@app.get("/")
+def root() -> dict[str, str]:
+    # Simple root endpoint so platforms (like Render) receive 200 instead of 404
+    return {"status": "ok", "service": "ThreatLens", "note": "See /health and API endpoints"}
+
+
 @app.get("/threats")
 def get_threats(limit: int = Query(50, ge=1, le=500), severity_min: int = Query(1, ge=1, le=10)):
     return {"items": db.recent_threats(limit=limit, severity_min=severity_min)}
