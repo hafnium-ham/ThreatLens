@@ -153,6 +153,8 @@ class RepoScanner:
                 self.tracer.flush()
                 await self.hub.broadcast(scan_id, {"status": "complete", "vulns_found": total_vulns, "repos_total": len(repos)})
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             await self._update(scan_id, username, started, self.status.get(scan_id, {}).get("repos_total", 0), self.status.get(scan_id, {}).get("repos_scanned", 0), self.status.get(scan_id, {}).get("vulns_found", 0), "error")
             await self.hub.broadcast(scan_id, {"status": "error", "error": type(exc).__name__})
 
