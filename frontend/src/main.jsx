@@ -623,6 +623,38 @@ function SeverityBar({ breakdown = {} }) {
   );
 }
 
+/* ─── Threat Map ────────────────────────────────────────────── */
+function ThreatMap() {
+  const points = [
+    { id: 1, cx: "25%", cy: "35%", color: "var(--critical)" },
+    { id: 2, cx: "75%", cy: "25%", color: "var(--high)" },
+    { id: 3, cx: "45%", cy: "45%", color: "var(--neon)" },
+    { id: 4, cx: "85%", cy: "65%", color: "var(--medium)" },
+    { id: 5, cx: "20%", cy: "70%", color: "var(--cyan)" },
+  ];
+  return (
+    <div className="threat-map-container">
+      <div className="benchmark-title"><Activity size={14} /> THREAT ORIGIN MAP</div>
+      <div className="threat-map">
+        <svg viewBox="0 0 800 400" preserveAspectRatio="xMidYMid slice" className="map-svg">
+          {/* Simple abstract world map paths */}
+          <path d="M150,100 Q180,80 200,120 T250,150 T150,250 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
+          <path d="M400,50 Q450,40 500,80 T600,100 T550,200 T450,180 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
+          <path d="M650,150 Q700,120 750,180 T700,280 T600,220 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
+          <path d="M300,250 Q350,220 400,280 T350,350 T280,300 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
+          
+          {points.map((pt) => (
+            <g key={pt.id}>
+              <circle cx={pt.cx} cy={pt.cy} r="4" fill={pt.color} />
+              <circle cx={pt.cx} cy={pt.cy} r="12" fill="none" stroke={pt.color} className="pulse-ring" />
+            </g>
+          ))}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Custom Donut Center Label ───────────────────────────── */
 function DonutCenterLabel({ viewBox, value }) {
   const { cx, cy } = viewBox;
@@ -707,6 +739,7 @@ function AnalyticsBar({ analytics, analyticsExtra }) {
           </div>
         </div>
       )}
+      <ThreatMap />
     </section>
   );
 }

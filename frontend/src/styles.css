@@ -1098,6 +1098,39 @@ button,
   to { transform: translateY(320%); }
 }
 
+@keyframes mapPulse {
+  0% { transform: scale(0.5); opacity: 0.8; stroke-width: 2; }
+  100% { transform: scale(3); opacity: 0; stroke-width: 0.5; }
+}
+
+.threat-map-container {
+  flex: 1 1 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: #050a12;
+  padding: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.threat-map {
+  width: 100%;
+  height: 140px;
+  overflow: hidden;
+  position: relative;
+}
+
+.map-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.pulse-ring {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: mapPulse 2.5s infinite cubic-bezier(0.1, 0.8, 0.3, 1);
+}
+
 /* ─── Responsive ───────────────────────────────────────────── */
 @media (max-width: 1100px) {
   .app {
