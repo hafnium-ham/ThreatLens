@@ -308,9 +308,11 @@ function App() {
       body: JSON.stringify({ username }),
     });
     const payload = await res.json();
+    const resolved = payload.resolved_username || username;
     setScan(payload);
     setScanStatus({ status: payload.status, repos_total: payload.repos_found || 0, repos_scanned: 0, vulns_found: 0 });
-    setActiveUser(username);
+    setUsername(resolved);
+    setActiveUser(resolved);
   };
 
   const triggerAgent = async () => {
@@ -336,7 +338,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell app-enter">
+    <div className={`app-shell app-enter ${agentRunning ? "agent-active" : ""}`}>
       {banner && (
         <div className="critical-banner" style={{ position: "absolute", top: 48, left: 0, right: 0, zIndex: 50 }}>
           <AlertTriangle size={20} />
@@ -360,8 +362,8 @@ function App() {
             <Shield size={15} /> <AnimatedCounter value={totalThreats} /> THREATS
           </span>
           <span className="critical-counter"><Bell size={15} /> {criticalAlerts} CRITICAL ALERTS</span>
-          <button className="agent-trigger-btn" onClick={triggerAgent} disabled={agentRunning}>
-            {agentRunning ? <><Loader size={15} className="spin" /> RUNNING...</> :
+          <button className={`agent-trigger-btn ${agentRunning ? "running" : ""}`} onClick={triggerAgent} disabled={agentRunning}>
+            {agentRunning ? <><Loader size={15} className="spin" /> AI AGENT ACTIVE - SCANNING...</> :
              agentResult ? <><CheckCircle size={15} /> {agentResult}</> :
              <><Zap size={15} /> RUN AGENT NOW</>}
           </button>
@@ -647,42 +649,26 @@ function SeverityBar({ breakdown = {} }) {
   );
 }
 
-/* ─── Custom Donut Center Label ───────────────────────────── */
-function DonutCenterLabel({ viewBox, value }) {
-  const { cx, cy } = viewBox;
+/* ─── Threat Sources Chart ────────────────────────────────────── */
+function ThreatSourcesChart({ data }) {
+  if (!data || data.length === 0) return null;
   return (
-    <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fill="#e2e8f0" fontFamily="JetBrains Mono, monospace" fontWeight="900" fontSize="18">
-      {value}
-    </text>
-  );
-}
-
-/* ─── Threat Map ────────────────────────────────────────────── */
-function ThreatMap() {
-  const points = [
-    { id: 1, cx: "25%", cy: "35%", color: "var(--critical)" },
-    { id: 2, cx: "75%", cy: "25%", color: "var(--high)" },
-    { id: 3, cx: "45%", cy: "45%", color: "var(--neon)" },
-    { id: 4, cx: "85%", cy: "65%", color: "var(--medium)" },
-    { id: 5, cx: "20%", cy: "70%", color: "var(--cyan)" },
-  ];
-  return (
-    <div className="threat-map-container">
-      <div className="benchmark-title"><Activity size={14} /> THREAT ORIGIN MAP</div>
-      <div className="threat-map">
-        <svg viewBox="0 0 800 400" preserveAspectRatio="xMidYMid slice" className="map-svg">
-          <path d="M150,100 Q180,80 200,120 T250,150 T150,250 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
-          <path d="M400,50 Q450,40 500,80 T600,100 T550,200 T450,180 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
-          <path d="M650,150 Q700,120 750,180 T700,280 T600,220 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
-          <path d="M300,250 Q350,220 400,280 T350,350 T280,300 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
-          
-          {points.map((pt) => (
-            <g key={pt.id}>
-              <circle cx={pt.cx} cy={pt.cy} r="4" fill={pt.color} />
-              <circle cx={pt.cx} cy={pt.cy} r="12" fill="none" stroke={pt.color} className="pulse-ring" />
-            </g>
-          ))}
-        </svg>
+    <div className="threat-map-container" style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '0.55rem', background: 'rgba(17, 24, 39, 0.92)' }}>
+      <div className="benchmark-title" style={{ marginBottom: '1rem' }}><Activity size={14} /> THREAT SOURCES</div>
+      <div style={{ height: '250px' }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" horizontal={false} />
+            <XAxis type="number" stroke="#64748b" />
+            <YAxis dataKey="source" type="category" stroke="#64748b" width={80} />
+            <Tooltip contentStyle={{ background: "#111827", border: "1px solid #1f2937", color: "#e2e8f0" }} />
+            <Bar dataKey="count" fill="var(--cyan)" radius={[0, 4, 4, 0]}>
+              {data.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={index === 0 ? "var(--neon)" : "var(--cyan)"} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
@@ -774,8 +760,8 @@ function AnalyticsTab({ analytics, analyticsExtra }) {
         </div>
       )}
 
-      {/* Row 5: Map */}
-      <ThreatMap />
+      {/* Row 5: Threat Sources */}
+      <ThreatSourcesChart data={analyticsExtra?.by_source} />
     </div>
   );
 }

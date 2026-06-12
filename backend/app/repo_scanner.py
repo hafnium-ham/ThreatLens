@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import time
+import urllib.parse
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -57,8 +58,42 @@ class RepoScanner:
         self.status: dict[str, dict[str, Any]] = {}
         self._locks: dict[str, asyncio.Task] = {}
 
+
+    async def _resolve_username(self, query: str) -> str:
+        headers = {"Accept": "application/vnd.github+json", "User-Agent": "ThreatLens"}
+        if self.settings.github_token:
+            headers["Authorization"] = f"Bearer {self.settings.github_token}"
+        
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
+            if " " not in query:
+                try:
+                    res = await client.get(f"https://api.github.com/users/{urllib.parse.quote(query)}")
+                    if res.status_code == 200:
+                        return res.json()["login"]
+                except Exception:
+                    pass
+            
+            try:
+                # Search across users and orgs
+                res = await client.get("https://api.github.com/search/users", params={"q": query})
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get("items"):
+                        # Prioritize orgs
+                        for item in data["items"]:
+                            if item.get("type") == "Organization":
+                                return item["login"]
+                        return data["items"][0]["login"]
+            except Exception:
+                pass
+                
+        return query
+
     async def start_scan(self, username: str) -> dict[str, Any]:
         username = username.strip().strip("/")
+        resolved_username = await self._resolve_username(username)
+        username = resolved_username
+
         scan_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc)
         state = {
@@ -74,7 +109,7 @@ class RepoScanner:
         self.status[scan_id] = {**state, "timestamp": now.isoformat()}
         self.db.insert_repo_scan_status(state)
         self._locks[scan_id] = asyncio.create_task(self._run_scan(scan_id, username, now))
-        return {"scan_id": scan_id, "repos_found": 0, "status": "scanning"}
+        return {"scan_id": scan_id, "repos_found": 0, "status": "scanning", "resolved_username": username}
 
     async def _run_scan(self, scan_id: str, username: str, started: datetime) -> None:
         trace_id = self.tracer.trace_id()
