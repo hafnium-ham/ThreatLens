@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import time
@@ -58,14 +59,30 @@ class ThreatTriageAI:
         )
         if self.client:
             try:
-                response = await self.client.chat.completions.create(
-                    model=self.settings.groq_model,
-                    max_tokens=700,
-                    temperature=0.1,
-                    tools=[TRIAGE_TOOL],
-                    tool_choice={"type": "function", "function": {"name": "record_threat_triage"}},
-                    messages=[{"role": "user", "content": prompt}],
-                )
+                backoff_delays = [0.5, 1.0, 2.0]
+                response = None
+                for attempt in range(3):
+                    try:
+                        response = await self.client.chat.completions.create(
+                            model=self.settings.groq_model,
+                            max_tokens=700,
+                            temperature=0.1,
+                            tools=[TRIAGE_TOOL],
+                            tool_choice={"type": "function", "function": {"name": "record_threat_triage"}},
+                            messages=[{"role": "user", "content": prompt}],
+                        )
+                        break
+                    except Exception as retry_exc:
+                        exc_name = type(retry_exc).__name__
+                        if exc_name in ("AuthenticationError", "PermissionDeniedError"):
+                            raise
+                        if attempt < 2 and exc_name in (
+                            "RateLimitError", "APITimeoutError", "APIConnectionError",
+                            "Timeout", "ConnectError", "ReadTimeout",
+                        ):
+                            await asyncio.sleep(backoff_delays[attempt])
+                            continue
+                        raise
                 payload = self._extract_tool(response)
                 latency_ms = int((time.perf_counter() - start) * 1000)
                 result = self._result_from_payload(payload, latency_ms, trace_id)

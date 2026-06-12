@@ -1,10 +1,14 @@
 import asyncio
+import csv
+import io
+import time
 from contextlib import asynccontextmanager, suppress
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.responses import StreamingResponse
 
 from .agent import ThreatLensAgent
 from .ai import ThreatTriageAI
@@ -88,9 +92,58 @@ def get_threats(limit: int = Query(50, ge=1, le=500), severity_min: int = Query(
     return {"items": db.recent_threats(limit=limit, severity_min=severity_min)}
 
 
+@app.get("/threats/export")
+def export_threats_csv():
+    threats = db.recent_threats(limit=500, severity_min=1)
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=["id", "timestamp", "source", "threat_type", "target", "severity", "ai_summary", "status"],
+        extrasaction="ignore",
+    )
+    writer.writeheader()
+    writer.writerows(threats)
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=threats_export.csv"},
+    )
+
+
 @app.get("/analytics/summary")
 def analytics_summary():
     return db.analytics_summary()
+
+
+@app.get("/analytics/clickhouse-benchmark")
+def clickhouse_benchmark():
+    queries = [
+        {
+            "name": "severity_histogram",
+            "sql": "SELECT severity, count(), avg(triage_latency_ms) FROM threat_events GROUP BY severity ORDER BY severity",
+        },
+        {
+            "name": "source_rollup_72h",
+            "sql": "SELECT source, count(), quantile(0.95)(triage_latency_ms) FROM threat_events WHERE timestamp >= now() - INTERVAL 72 HOUR GROUP BY source ORDER BY count() DESC",
+        },
+        {
+            "name": "top_10_critical_targets",
+            "sql": "SELECT target, max(severity), count() FROM threat_events WHERE severity >= 9 GROUP BY target ORDER BY count() DESC LIMIT 10",
+        },
+    ]
+    results = []
+    for q in queries:
+        start = time.perf_counter()
+        result = db.client.query(q["sql"])
+        execution_ms = round((time.perf_counter() - start) * 1000, 2)
+        results.append({
+            "name": q["name"],
+            "sql": q["sql"],
+            "execution_ms": execution_ms,
+            "rows": len(result.result_rows),
+        })
+    return {"queries": results}
 
 
 @app.get("/agent/runs")
@@ -113,6 +166,15 @@ async def trigger_agent():
         raise HTTPException(status_code=409, detail="Agent run already in progress")
     run = await agent.run_once()
     return run.model_dump(mode="json")
+
+
+@app.post("/demo/reset")
+def demo_reset():
+    db.client.command("TRUNCATE TABLE IF EXISTS repo_vulns")
+    db.client.command("TRUNCATE TABLE IF EXISTS repo_inventory")
+    db.client.command("TRUNCATE TABLE IF EXISTS repo_scans")
+    seed_repo_demo_data(db)
+    return {"status": "reset", "message": "Demo data re-seeded"}
 
 
 @app.get("/cves")

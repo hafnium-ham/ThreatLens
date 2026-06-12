@@ -141,7 +141,10 @@ class RepoScanner:
                 url = f"https://raw.githubusercontent.com/{username}/{repo}/{branch}/{filename}"
                 response = await client.get(url)
                 if response.status_code == 200:
-                    branch_deps.extend(parse_dependencies(filename, ecosystem, response.text))
+                    try:
+                        branch_deps.extend(parse_dependencies(filename, ecosystem, response.text))
+                    except Exception:
+                        continue
             if branch_deps:
                 deps.extend(branch_deps)
                 break
@@ -184,16 +187,27 @@ class RepoScanner:
         if dep.get("version"):
             payload["version"] = dep["version"]
         start = time.perf_counter()
-        response = await client.post("https://api.osv.dev/v1/query", json=payload)
-        latency_ms = int((time.perf_counter() - start) * 1000)
-        response.raise_for_status()
-        data = response.json()
+        data: dict[str, Any] = {"vulns": []}
+        last_error = ""
+        for attempt in range(3):
+            try:
+                response = await client.post("https://api.osv.dev/v1/query", json=payload)
+                latency_ms = int((time.perf_counter() - start) * 1000)
+                response.raise_for_status()
+                data = response.json()
+                break
+            except Exception as exc:
+                last_error = type(exc).__name__
+                if attempt == 2:
+                    latency_ms = int((time.perf_counter() - start) * 1000)
+                else:
+                    await asyncio.sleep(0.4 * (2**attempt))
         self.tracer.generation(
             trace,
             "osv-package-query",
             "osv-api",
             payload,
-            {"vulns": len(data.get("vulns", [])), "package": dep["name"]},
+            {"vulns": len(data.get("vulns", [])), "package": dep["name"], "error": last_error},
             {},
             {"generation_type": "osv-api-call", "ecosystem": dep["ecosystem"], "package": dep["name"]},
             latency_ms,
