@@ -37,7 +37,14 @@ import {
 } from "recharts";
 import "./styles.css";
 
-const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+// Use configured API base if provided at build time; otherwise use relative origin so the SPA works when served from the same host
+const API = import.meta.env.VITE_API_BASE_URL ?? "";
+// Helper to resolve websocket base depending on runtime environment
+function wsBaseFor(apiBase) {
+  if (apiBase) return apiBase.replace(/^http/, "ws");
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${location.host}`;
+}
 
 const COLORS = {
   CRITICAL: "#ff3366",
@@ -284,7 +291,7 @@ function App() {
 
   useEffect(() => {
     if (!scan?.scan_id) return;
-    const wsUrl = `${API.replace(/^http/, "ws")}/ws/scan/${scan.scan_id}`;
+    const wsUrl = `${wsBaseFor(API)}/ws/scan/${scan.scan_id}`;
     const socket = new WebSocket(wsUrl);
     socket.onmessage = (event) => {
       const message = JSON.parse(event.data);
