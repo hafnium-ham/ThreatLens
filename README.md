@@ -131,13 +131,7 @@ minimist               3               9.8
 serialize-javascript   3               8.1
 ```
 
-## Screenshots
 
-Live demo GIF placeholder:
-
-- `screenshots/threatlens-demo.gif`
-- `screenshots/repo-dashboard.png`
-- `screenshots/critical-alert.png`
 
 ## Development
 
