@@ -1,14 +1,17 @@
 import asyncio
 import csv
 import io
+import os
 import time
 from contextlib import asynccontextmanager, suppress
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from starlette.responses import StreamingResponse
+from starlette.requests import Request
+from starlette.responses import FileResponse, StreamingResponse
 
 from .agent import ThreatLensAgent
 from .ai import ThreatTriageAI
@@ -81,6 +84,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve frontend static files if present (single-image deployment)
+FRONTEND_DIST = os.path.join(os.getcwd(), "frontend", "dist")
+if os.path.isdir(FRONTEND_DIST):
+    # Mount static files as a fallback for SPA routes
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIST), name="static")
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -88,9 +97,21 @@ def health() -> dict[str, str]:
 
 
 @app.get("/")
-def root() -> dict[str, str]:
-    # Simple root endpoint so platforms (like Render) receive 200 instead of 404
+def root():
+    index_path = os.path.join("frontend", "dist", "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path, media_type="text/html")
     return {"status": "ok", "service": "ThreatLens", "note": "See /health and API endpoints"}
+
+
+# SPA fallback: return index.html for GET requests without a file extension
+@app.exception_handler(404)
+async def spa_fallback(request: Request, exc):
+    if request.method == "GET" and not os.path.splitext(request.url.path)[1]:
+        index_path = os.path.join("frontend", "dist", "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path, media_type="text/html")
+    raise exc
 
 
 @app.get("/threats")
