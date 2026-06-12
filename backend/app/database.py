@@ -118,7 +118,7 @@ class ClickHouse:
 
     def connect(self) -> None:
         last_error: Exception | None = None
-        for _ in range(30):
+        for attempt in range(3):
             try:
                 self.client = clickhouse_connect.get_client(
                     host=self.settings.clickhouse_host,
@@ -134,7 +134,8 @@ class ClickHouse:
                 return
             except Exception as exc:
                 last_error = exc
-                time.sleep(1)
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
         raise RuntimeError(f"ClickHouse connection failed: {last_error}") from last_error
 
     def ensure_schema(self) -> None:
