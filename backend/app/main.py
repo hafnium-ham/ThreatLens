@@ -87,8 +87,11 @@ app.add_middleware(
 # Serve frontend static files if present (single-image deployment)
 FRONTEND_DIST = os.path.join(os.getcwd(), "frontend", "dist")
 if os.path.isdir(FRONTEND_DIST):
-    # Mount static files as a fallback for SPA routes
+    # Serve built assets under /assets (Vite outputs /assets)
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
+    # Serve other static files and enable SPA fallback for index.html
     app.mount("/static", StaticFiles(directory=FRONTEND_DIST), name="static")
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 
 
 @app.get("/health")
