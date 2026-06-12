@@ -89,9 +89,8 @@ FRONTEND_DIST = os.path.join(os.getcwd(), "frontend", "dist")
 if os.path.isdir(FRONTEND_DIST):
     # Serve built assets under /assets (Vite outputs /assets)
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
-    # Serve other static files and enable SPA fallback for index.html
+    # Serve other static files under /static
     app.mount("/static", StaticFiles(directory=FRONTEND_DIST), name="static")
-    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 
 
 @app.get("/health")
@@ -107,10 +106,32 @@ def root():
     return {"status": "ok", "service": "ThreatLens", "note": "See /health and API endpoints"}
 
 
-# SPA fallback: return index.html for GET requests without a file extension
+# SPA fallback: return index.html for GET requests without a file extension,
+# but do NOT override API routes.
+API_PREFIXES = (
+    "/threats",
+    "/analytics",
+    "/agent",
+    "/scan",
+    "/cves",
+    "/repos",
+    "/feed",
+    "/ws",
+    "/assets",
+    "/static",
+    "/favicon.ico",
+    "/api",
+)
+
 @app.exception_handler(404)
 async def spa_fallback(request: Request, exc):
-    if request.method == "GET" and not os.path.splitext(request.url.path)[1]:
+    path = request.url.path or ""
+    # Only serve index.html for client-side routes (no file extension) and not API paths
+    if (
+        request.method == "GET"
+        and not os.path.splitext(path)[1]
+        and not any(path.startswith(p) for p in API_PREFIXES)
+    ):
         index_path = os.path.join("frontend", "dist", "index.html")
         if os.path.exists(index_path):
             return FileResponse(index_path, media_type="text/html")
