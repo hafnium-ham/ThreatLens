@@ -7,20 +7,28 @@
 ![ClickHouse](https://img.shields.io/badge/ClickHouse-Columnar-FFCC01?logo=clickhouse&logoColor=111827)
 ![Langfuse](https://img.shields.io/badge/Langfuse-Tracing-111827)
 ![Groq](https://img.shields.io/badge/Groq-llama--3.3--70b-orange)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
-ThreatLens is a full-stack AI cybersecurity threat intelligence platform. It collects attack-surface signals, triages them with Groq `llama-3.3-70b-versatile`, traces every inference in Langfuse, stores events in ClickHouse, and streams a live dark SOC dashboard.
+ThreatLens is a GitHub repository vulnerability intelligence platform. Give it a GitHub username or org and it scans public repos, reads dependency files, checks packages against OSV, stores findings in ClickHouse, traces scan activity in Langfuse, and shows affected repos on a live SOC dashboard with critical in-browser alarms.
+
+> Prize targets: Best Use of ClickHouse + Best Use of Langfuse bonus.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  Agent["ThreatLens Agent<br/>APScheduler every 5 min"] --> Collectors["Collectors<br/>NVD, Shodan, GitHub, HIBP"]
-  Collectors --> Triage["Groq LLM Triage<br/>severity, type, summary, decision"]
-  Triage --> Langfuse["Langfuse<br/>trace + generation + scores"]
-  Triage --> ClickHouse["ClickHouse<br/>threat_events, agent_runs, cve_intel"]
-  ClickHouse --> API["FastAPI<br/>REST + WebSocket"]
-  API --> Dashboard["React SOC Dashboard<br/>Live Feed, Analytics, Logs, CVEs"]
+  User["GitHub username/org"] --> API["FastAPI /scan/github"]
+  API --> GitHub["GitHub repos + raw dependency files"]
+  GitHub --> Parser["Dependency parsers<br/>npm, PyPI, Go, Cargo, Maven, Gem, Composer, NuGet"]
+  Parser --> OSV["OSV API<br/>package vulnerabilities"]
+  OSV --> Langfuse["Langfuse repo-scan traces<br/>OSV calls + scan scores"]
+  OSV --> ClickHouse["ClickHouse<br/>repo_scans, repo_inventory, repo_vulns"]
+  ClickHouse --> Dashboard["React split dashboard<br/>live feed + repo intelligence"]
+  API --> WS["WebSocket /ws/scan/{scan_id}"]
+  WS --> Dashboard
 ```
+
+The original autonomous threat agent still runs every 5 minutes and keeps the previous threat-event APIs alive. The new repo scanner is additive and is now the main demo surface.
 
 ## Setup In 3 Commands
 
@@ -30,115 +38,106 @@ cd threatlens && cp .env.example .env
 docker compose up --build
 ```
 
-The Compose file includes working defaults for Langfuse and ClickHouse. Add `GROQ_API_KEY` to `.env` to enable live Groq inference. Without it, ThreatLens automatically uses deterministic local triage so the dashboard and pipeline still work.
-
 Dashboard: [http://localhost:5173](http://localhost:5173)  
 API: [http://localhost:8000](http://localhost:8000)
 
-## What It Does
+The Compose file includes ClickHouse Cloud and Langfuse defaults. Add `GROQ_API_KEY` for live LLM triage in the legacy threat agent. Repo scanning uses GitHub public APIs and OSV with no key required.
 
-- Collects recent CVEs from NVD, GitHub security advisories, Shodan InternetDB exposure data, and HIBP domain breaches.
-- Scores each threat from 1-10, classifies type, writes a two-sentence executive summary, and decides `IGNORE`, `MONITOR`, or `ALERT`.
-- Writes all threat events, CVE intelligence, and agent runs to ClickHouse.
-- Traces every Groq call in Langfuse with model, usage, latency, severity score, decision, source, threat type, and severity bucket.
-- Runs automatically every 5 minutes and immediately on startup.
-- Auto-seeds 300 realistic events if the database has fewer than 50 rows.
+## Dashboard
 
-## Demo Queries
+The main screen is a full-height split panel:
 
-Threat volume and severity by hour:
-
-```sql
-SELECT
-  toStartOfHour(timestamp) AS hour,
-  count() AS threats,
-  round(avg(severity), 2) AS avg_severity
-FROM threat_events
-WHERE timestamp >= now() - INTERVAL 24 HOUR
-GROUP BY hour
-ORDER BY hour DESC
-LIMIT 5;
-```
-
-Expected output:
-
-```text
-hour                 threats  avg_severity
-2026-06-12 18:00:00  12       6.83
-2026-06-12 17:00:00  9        5.78
-2026-06-12 16:00:00  14       7.21
-```
-
-p95 AI triage latency by source:
-
-```sql
-SELECT
-  source,
-  count() AS events,
-  quantile(0.95)(triage_latency_ms) AS p95_triage_ms
-FROM threat_events
-WHERE triage_latency_ms > 0
-GROUP BY source
-ORDER BY events DESC;
-```
-
-Expected output:
-
-```text
-source   events  p95_triage_ms
-nvd      96      1710
-shodan   84      1664
-github   72      1592
-hibp     48      1518
-```
-
-Critical targets for incident response:
-
-```sql
-SELECT
-  target,
-  max(severity) AS max_severity,
-  count() AS critical_events
-FROM threat_events
-WHERE severity >= 9
-GROUP BY target
-ORDER BY critical_events DESC
-LIMIT 10;
-```
-
-Expected output:
-
-```text
-target          max_severity  critical_events
-203.0.113.10    10            6
-CVE-2026-34891  10            5
-GHSA-demo-9x2p  9             4
-```
-
-## Why ClickHouse?
-
-Threat intelligence is naturally analytical: analysts slice by time, source, severity, target, status, latency, and model behavior. ClickHouse stores columns together, so queries that scan only `timestamp`, `severity`, `source`, and `triage_latency_ms` avoid dragging large raw JSON payloads through memory. That makes rollups like threats per hour, p95 triage latency, source distribution, and critical target ranking fast even as event volume grows.
-
-ThreatLens uses MergeTree ordering on timestamp, severity, source, and id so recent operational questions stay efficient while still preserving raw event detail for investigation.
-
-## Screenshots
-
-Add screenshots here after running the demo:
-
-- `screenshots/live-feed.png`
-- `screenshots/analytics.png`
-- `screenshots/agent-log.png`
-- `screenshots/cve-intel.png`
+- Left: `⬡ LIVE VULNERABILITY FEED`, an auto-scrolling CVE ticker with severity, CVSS score, package, publish date, and critical pulse animations.
+- Right: repo intelligence scanner with GitHub username/org input, scan progress, sortable/filterable repo cards, expandable vulnerable dependency details, fix recommendations, severity bars, and analytics.
+- In-browser alarm system: critical vulnerabilities trigger generated Web Audio beeps, a red slide-down banner, pulsing repo cards, critical counter increments, and a browser title warning.
 
 ## API
 
-- `GET /threats?limit=50&severity_min=5`
-- `GET /analytics/summary`
-- `GET /agent/status`
-- `GET /agent/runs`
-- `POST /agent/trigger`
-- `GET /cves?search=apache`
-- `WebSocket /ws/feed`
+- `POST /scan/github` with `{ "username": "facebook" }`
+- `GET /scan/status/{scan_id}`
+- `GET /repos/{username}`
+- `GET /repos/{username}/{repo_name}/vulns`
+- `GET /feed/live`
+- `WebSocket /ws/scan/{scan_id}`
+- Existing APIs remain: `/threats`, `/analytics/summary`, `/agent/runs`, `/agent/trigger`, `/cves`, `/ws/feed`
+
+## Why ClickHouse For Threat Intel?
+
+Repo vulnerability scanning produces analytical data: repo, package, ecosystem, severity, CVSS, publish date, scan id, stars, language, and fix version. ClickHouse stores columns together, so dashboard queries can scan only the columns needed for rollups instead of dragging large descriptions and raw metadata through memory.
+
+That makes these questions fast:
+
+- Which repos have the most critical vulnerabilities?
+- How many findings did this scan discover by severity?
+- What changed in the last 7 days?
+- Which package names create the biggest blast radius?
+
+## Demo SQL Queries
+
+Critical repos, expected sub-100ms on the demo dataset:
+
+```sql
+SELECT repo_name, count() AS criticals, max(cvss_score) AS worst
+FROM repo_vulns
+WHERE severity = 'CRITICAL'
+GROUP BY repo_name
+ORDER BY criticals DESC
+LIMIT 5;
+```
+
+Expected:
+
+```text
+repo_name  criticals  worst
+react      3          9.8
+rocksdb    1          9.8
+jest       1          9.8
+```
+
+Severity distribution for the dashboard:
+
+```sql
+SELECT severity, count() AS vulns
+FROM repo_vulns
+GROUP BY severity
+ORDER BY vulns DESC;
+```
+
+Expected:
+
+```text
+severity  vulns
+HIGH      10
+MEDIUM    8
+CRITICAL  5
+```
+
+Most affected packages:
+
+```sql
+SELECT package_name, count() AS affected_repos, max(cvss_score) AS worst
+FROM repo_vulns
+GROUP BY package_name
+ORDER BY affected_repos DESC, worst DESC
+LIMIT 10;
+```
+
+Expected:
+
+```text
+package_name           affected_repos  worst
+lodash                 4               9.8
+minimist               3               9.8
+serialize-javascript   3               8.1
+```
+
+## Screenshots
+
+Live demo GIF placeholder:
+
+- `screenshots/threatlens-demo.gif`
+- `screenshots/repo-dashboard.png`
+- `screenshots/critical-alert.png`
 
 ## Development
 
@@ -158,10 +157,4 @@ Frontend:
 cd frontend
 npm install
 npm run dev
-```
-
-Manual seed:
-
-```bash
-python scripts/seed_demo.py
 ```
