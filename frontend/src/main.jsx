@@ -141,6 +141,13 @@ function isFresh(date) {
   return Date.now() - new Date(date).getTime() < 24 * 60 * 60 * 1000;
 }
 
+function getCvssColor(score) {
+  if (score >= 9) return COLORS.CRITICAL;
+  if (score >= 7) return COLORS.HIGH;
+  if (score >= 4) return COLORS.MEDIUM;
+  return COLORS.LOW;
+}
+
 function playAlarm() {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   if (!AudioContext) return;
@@ -230,6 +237,7 @@ function App() {
   const [toasts, setToasts] = useState([]);
   const [agentRunning, setAgentRunning] = useState(false);
   const [agentResult, setAgentResult] = useState(null);
+  const [activeTab, setActiveTab] = useState("repos");
 
   const agentStatus = useAgentStatus();
   const repos = useApi(`/repos/${encodeURIComponent(activeUser)}`, 8000);
@@ -328,15 +336,17 @@ function App() {
   }
 
   return (
-    <div className="app app-enter">
+    <div className="app-shell app-enter">
       {banner && (
-        <div className="critical-banner">
+        <div className="critical-banner" style={{ position: "absolute", top: 48, left: 0, right: 0, zIndex: 50 }}>
           <AlertTriangle size={20} />
           <strong>{banner}</strong>
           <button onClick={() => setBanner(null)}><X size={18} /></button>
         </div>
       )}
-      <header className="app-header">
+      
+      {/* ZONE 1 - HEADER */}
+      <header className="header">
         <div className="header-left">
           <div className="brand">
             ⬡ THREATLENS
@@ -358,36 +368,59 @@ function App() {
           {completeMessage && <span className="complete-pill">{completeMessage}</span>}
         </div>
       </header>
-      <main className="split-layout">
+
+      {/* ZONE 2 - LEFT PANEL */}
+      <aside className="left-panel">
         <ErrorBoundary>
           <LiveFeed items={feed.data?.items || []} loading={feed.loading} error={feed.error} />
         </ErrorBoundary>
-        <ErrorBoundary>
-          <RepoIntelligence
-            username={username}
-            setUsername={setUsername}
-            activeUser={activeUser}
-            scanGithub={scanGithub}
-            scanStatus={scanStatus}
-            repos={repos.data?.items || []}
-            analytics={repos.data?.analytics}
-            analyticsExtra={analytics.data}
-            loading={repos.loading}
-            error={repos.error}
-          />
-        </ErrorBoundary>
+      </aside>
+
+      {/* ZONE 3 - MAIN AREA */}
+      <main className="main-area">
+        <div className="tab-bar">
+          <button className={`tab-btn ${activeTab === "repos" ? "active" : ""}`} onClick={() => setActiveTab("repos")}>REPOS</button>
+          <button className={`tab-btn ${activeTab === "analytics" ? "active" : ""}`} onClick={() => setActiveTab("analytics")}>ANALYTICS</button>
+          <button className={`tab-btn ${activeTab === "agent_log" ? "active" : ""}`} onClick={() => setActiveTab("agent_log")}>AGENT LOG</button>
+          <button className={`tab-btn ${activeTab === "cve_intel" ? "active" : ""}`} onClick={() => setActiveTab("cve_intel")}>CVE INTEL</button>
+        </div>
+        
+        <div className="tab-content">
+          <ErrorBoundary>
+            {activeTab === "repos" && (
+              <RepoIntelligenceTab
+                username={username}
+                setUsername={setUsername}
+                activeUser={activeUser}
+                scanGithub={scanGithub}
+                scanStatus={scanStatus}
+                repos={repos.data?.items || []}
+                loading={repos.loading}
+                error={repos.error}
+              />
+            )}
+            {activeTab === "analytics" && (
+              <AnalyticsTab
+                analytics={repos.data?.analytics}
+                analyticsExtra={analytics.data}
+              />
+            )}
+            {activeTab === "agent_log" && <AgentLogTab />}
+            {activeTab === "cve_intel" && <CveIntelTab />}
+          </ErrorBoundary>
+        </div>
       </main>
+
       <ToastContainer toasts={toasts} removeToast={removeToast} />
     </div>
   );
 }
 
-/* ─── Live Feed ───────────────────────────────────────────── */
+/* ─── Zone 2: Live Feed ────────────────────────────────────── */
 function LiveFeed({ items, loading, error }) {
   const [severityFilter, setSeverityFilter] = useState("ALL");
   const [sourceFilter, setSourceFilter] = useState("ALL");
   const [expandedId, setExpandedId] = useState(null);
-  const [paused, setPaused] = useState(false);
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
@@ -400,28 +433,26 @@ function LiveFeed({ items, loading, error }) {
     });
   }, [items, severityFilter, sourceFilter]);
 
-  const tickerItems = filteredItems.length ? [...filteredItems, ...filteredItems] : [];
-
   const handleEntryClick = (key) => {
     setExpandedId(expandedId === key ? null : key);
-    setPaused(true);
   };
 
   return (
-    <section className="left-panel">
-      <div className="panel-title">⬡ LIVE VULNERABILITY FEED</div>
+    <>
+      <div style={{ fontSize: '11px', color: 'var(--muted)', letterSpacing: '0.1em', marginBottom: '0.5rem', padding: '0.5rem' }}>CVE FEED</div>
       <div className="feed-filters">
-        <div className="filter-group">
+        <div className="filter-group" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
           {["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"].map((s) => (
             <button key={s} className={severityFilter === s ? "active-filter" : ""} onClick={() => setSeverityFilter(s)}
-              style={s !== "ALL" ? { borderColor: COLORS[s], color: severityFilter === s ? "#0a0e1a" : COLORS[s], background: severityFilter === s ? COLORS[s] : "transparent" } : {}}>
+              style={{ fontSize: '10px', padding: '2px 6px', ...(s !== "ALL" ? { borderColor: COLORS[s], color: severityFilter === s ? "#0a0e1a" : COLORS[s], background: severityFilter === s ? COLORS[s] : "transparent" } : {})}}>
               {s}
             </button>
           ))}
         </div>
-        <div className="filter-group">
+        <div className="filter-group" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
           {["ALL", "NVD", "SHODAN", "GITHUB", "HIBP"].map((s) => (
-            <button key={s} className={sourceFilter === s ? "active-filter" : ""} onClick={() => setSourceFilter(s)}>{s}</button>
+            <button key={s} className={sourceFilter === s ? "active-filter" : ""} onClick={() => setSourceFilter(s)}
+              style={{ fontSize: '10px', padding: '2px 6px' }}>{s}</button>
           ))}
         </div>
       </div>
@@ -429,58 +460,54 @@ function LiveFeed({ items, loading, error }) {
       {loading ? (
         <div className="scanline">INITIALIZING CVE STREAM</div>
       ) : (
-        <div className="ticker-shell" onMouseEnter={() => setPaused(true)} onMouseLeave={() => { if (!expandedId) setPaused(false); }}>
-          <div className={`ticker-list ${paused ? "ticker-paused" : ""}`}>
-            {tickerItems.map((item, index) => {
-              const key = `${item.vuln_id}-${item.repo_name}-${index}`;
-              const isExpanded = expandedId === key;
-              return (
-                <article key={key} className={`feed-entry ${item.severity === "CRITICAL" ? "critical" : ""} ${isExpanded ? "feed-expanded" : ""}`}
-                  onClick={() => handleEntryClick(key)}>
-                  <div className="feed-top">
+        <div className="feed-list" style={{ flex: 1 }}>
+          {filteredItems.map((item, index) => {
+            const key = `${item.vuln_id}-${item.repo_name}-${index}`;
+            const isExpanded = expandedId === key;
+            const cvssColor = getCvssColor(Number(item.cvss_score || 0));
+            return (
+              <article key={key} className={`feed-card ${isExpanded ? "expanded" : ""}`}
+                style={{ borderLeftColor: COLORS[item.severity] }}
+                onClick={() => handleEntryClick(key)}>
+                <div className="feed-top">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div className="cvss-pill" style={{ background: cvssColor }}>{Number(item.cvss_score || 0).toFixed(1)}</div>
                     <span className="cve">{item.vuln_id}</span>
-                    <span className="severity-pill" style={{ background: COLORS[item.severity] }}>{item.severity}</span>
                   </div>
-                  <div className="package-line">{item.package_name} {item.installed_version ? `@ ${item.installed_version}` : ""}</div>
-                  <div className="cvss-row">
-                    <span className="cvss" style={{ color: COLORS[item.severity] }}>{Number(item.cvss_score || 0).toFixed(1)}</span>
-                    <div className="cvss-bar-track">
-                      <div className="cvss-bar-fill" style={{ width: `${(Number(item.cvss_score || 0) / 10) * 100}%`, background: COLORS[item.severity] }} />
+                  <span className="severity-pill" style={{ background: COLORS[item.severity], padding: '2px 6px', fontSize: '9px' }}>{item.severity}</span>
+                </div>
+                <div className="package-line">{item.package_name} {item.installed_version ? `@ ${item.installed_version}` : ""}</div>
+                <p>{item.description}</p>
+                <div className="feed-meta">
+                  <span>{new Date(item.published_date).toLocaleDateString()}</span>
+                  {isFresh(item.published_date) && <strong style={{ color: 'var(--neon)' }}>NEW</strong>}
+                </div>
+                {isExpanded && (
+                  <div className="feed-expanded-details" style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid var(--border)' }}>
+                    {item.ai_summary && <div className="ai-summary" style={{ fontSize: '0.75rem', marginBottom: '0.5rem' }}><strong>AI ANALYSIS:</strong> {item.ai_summary}</div>}
+                    <div className="expanded-meta" style={{ fontSize: '0.7rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                      {item.package_name && <span><strong>Package:</strong> {item.package_name}</span>}
+                      {item.installed_version && <span><strong>Version:</strong> {item.installed_version}</span>}
+                      {item.fixed_version && <span><strong>Fix:</strong> {item.fixed_version}</span>}
+                      {item.langfuse_trace_id && (
+                        <a href={`https://cloud.langfuse.com/trace/${item.langfuse_trace_id}`} target="_blank" rel="noreferrer" className="trace-link" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--cyan)', marginTop: '4px' }}>
+                          <ExternalLink size={12} /> Langfuse Trace
+                        </a>
+                      )}
                     </div>
                   </div>
-                  <p>{item.description}</p>
-                  <div className="feed-meta">
-                    <span>{new Date(item.published_date).toLocaleDateString()}</span>
-                    {isFresh(item.published_date) && <strong>NEW</strong>}
-                  </div>
-                  {isExpanded && (
-                    <div className="feed-expanded-details">
-                      {item.ai_summary && <div className="ai-summary"><strong>AI ANALYSIS:</strong> {item.ai_summary}</div>}
-                      <div className="expanded-meta">
-                        <span><strong>Published:</strong> {new Date(item.published_date).toLocaleString()}</span>
-                        {item.package_name && <span><strong>Package:</strong> {item.package_name}</span>}
-                        {item.installed_version && <span><strong>Version:</strong> {item.installed_version}</span>}
-                        {item.fixed_version && <span><strong>Fix:</strong> {item.fixed_version}</span>}
-                        {item.langfuse_trace_id && (
-                          <a href={`https://cloud.langfuse.com/trace/${item.langfuse_trace_id}`} target="_blank" rel="noreferrer" className="trace-link">
-                            <ExternalLink size={12} /> Langfuse Trace
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       )}
-    </section>
+    </>
   );
 }
 
-/* ─── Repo Intelligence ───────────────────────────────────── */
-function RepoIntelligence({ username, setUsername, activeUser, scanGithub, scanStatus, repos, analytics, analyticsExtra, loading, error }) {
+/* ─── Zone 3: RepoIntelligence Tab ────────────────────────── */
+function RepoIntelligenceTab({ username, setUsername, activeUser, scanGithub, scanStatus, repos, loading, error }) {
   const [sort, setSort] = useState("vuln");
   const [filter, setFilter] = useState("ALL");
   const [expanded, setExpanded] = useState(null);
@@ -510,7 +537,7 @@ function RepoIntelligence({ username, setUsername, activeUser, scanGithub, scanS
   }, [repos, sort, filter]);
   const progress = scanStatus?.repos_total ? Math.round((scanStatus.repos_scanned / scanStatus.repos_total) * 100) : 0;
   return (
-    <section className="right-panel">
+    <>
       <section className="scan-box">
         <div className="input-row">
           <Search size={22} />
@@ -518,11 +545,11 @@ function RepoIntelligence({ username, setUsername, activeUser, scanGithub, scanS
           <button onClick={scanGithub}><Play size={17} /> SCAN</button>
         </div>
         <div className="status-row">
-          <span>{scanStatus?.status === "scanning" ? `Scanning ${scanStatus.repos_total || "…"} repos...` : `Last scanned: live | ${analytics?.total_repos || repos.length} repos | ${analytics?.total_vulns || 0} vulns found`}</span>
+          <span>{scanStatus?.status === "scanning" ? `Scanning ${scanStatus.repos_total || "…"} repos...` : `Last scanned: live | ${repos.length} repos`}</span>
           <div className="progress"><span style={{ width: `${progress}%` }} /></div>
         </div>
       </section>
-      <section className="repo-section">
+      <section className="repo-section" style={{ flex: 1 }}>
         <div className="repo-toolbar">
           <h2>Repo Intelligence: <span>{activeUser}</span></h2>
           <div className="controls">
@@ -550,10 +577,7 @@ function RepoIntelligence({ username, setUsername, activeUser, scanGithub, scanS
           </div>
         )}
       </section>
-      <ErrorBoundary>
-        <AnalyticsBar analytics={analytics} analyticsExtra={analyticsExtra} />
-      </ErrorBoundary>
-    </section>
+    </>
   );
 }
 
@@ -623,6 +647,16 @@ function SeverityBar({ breakdown = {} }) {
   );
 }
 
+/* ─── Custom Donut Center Label ───────────────────────────── */
+function DonutCenterLabel({ viewBox, value }) {
+  const { cx, cy } = viewBox;
+  return (
+    <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fill="#e2e8f0" fontFamily="JetBrains Mono, monospace" fontWeight="900" fontSize="18">
+      {value}
+    </text>
+  );
+}
+
 /* ─── Threat Map ────────────────────────────────────────────── */
 function ThreatMap() {
   const points = [
@@ -637,7 +671,6 @@ function ThreatMap() {
       <div className="benchmark-title"><Activity size={14} /> THREAT ORIGIN MAP</div>
       <div className="threat-map">
         <svg viewBox="0 0 800 400" preserveAspectRatio="xMidYMid slice" className="map-svg">
-          {/* Simple abstract world map paths */}
           <path d="M150,100 Q180,80 200,120 T250,150 T150,250 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
           <path d="M400,50 Q450,40 500,80 T600,100 T550,200 T450,180 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
           <path d="M650,150 Q700,120 750,180 T700,280 T600,220 Z" fill="rgba(100, 116, 139, 0.15)" stroke="var(--border)" />
@@ -655,18 +688,8 @@ function ThreatMap() {
   );
 }
 
-/* ─── Custom Donut Center Label ───────────────────────────── */
-function DonutCenterLabel({ viewBox, value }) {
-  const { cx, cy } = viewBox;
-  return (
-    <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fill="#e2e8f0" fontFamily="JetBrains Mono, monospace" fontWeight="900" fontSize="18">
-      {value}
-    </text>
-  );
-}
-
-/* ─── Analytics Bar ───────────────────────────────────────── */
-function AnalyticsBar({ analytics, analyticsExtra }) {
+/* ─── Zone 3: Analytics Tab ───────────────────────────────── */
+function AnalyticsTab({ analytics, analyticsExtra }) {
   const severityData = Object.entries(analytics?.severity_counts || {}).map(([name, count]) => ({ name: name.toUpperCase(), count }));
   const totalSeverity = severityData.reduce((sum, d) => sum + d.count, 0);
 
@@ -675,56 +698,71 @@ function AnalyticsBar({ analytics, analyticsExtra }) {
   const queryBenchmarks = analyticsExtra?.query_benchmarks || null;
 
   return (
-    <section className="analytics-bar">
-      <Stat label="Total repos scanned" value={analytics?.total_repos || 0} color="#00d4ff" />
-      <Stat label="Total vulns found" value={analytics?.total_vulns || 0} color="#ffd700" />
-      <Stat label="Critical count" value={analytics?.critical_count || 0} color="#ff3366" />
-      <Stat label="Most affected repo" value={analytics?.most_affected_repo || "none"} color="#00ff88" />
-      {meanTriageTime !== null && (
-        <Stat label="Mean Time to Triage" value={`${Math.round(meanTriageTime)}ms`} color="#00d4ff" icon={<Clock size={14} />} />
-      )}
-      {threatVelocity && (
-        <div className="stat threat-velocity">
-          <span><Activity size={12} /> Threat Velocity</span>
-          <strong style={{ color: "#00ff88" }}>{threatVelocity.current || 0}/hr</strong>
-          <div className="velocity-compare">
-            vs <span style={{ color: "#64748b" }}>{threatVelocity.previous_24h || 0}/hr</span> 24h ago
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Row 1: 4 Stats */}
+      <div style={{ display: 'flex', gap: '1rem' }}>
+        <div style={{ flex: 1 }}><Stat label="Total repos scanned" value={analytics?.total_repos || 0} color="#00d4ff" /></div>
+        <div style={{ flex: 1 }}><Stat label="Total vulns found" value={analytics?.total_vulns || 0} color="#ffd700" /></div>
+        <div style={{ flex: 1 }}><Stat label="Critical count" value={analytics?.critical_count || 0} color="#ff3366" /></div>
+        <div style={{ flex: 1 }}><Stat label="Most affected repo" value={analytics?.most_affected_repo || "none"} color="#00ff88" /></div>
+      </div>
+
+      {/* Row 2: 3 Stats */}
+      <div style={{ display: 'flex', gap: '1rem' }}>
+        {meanTriageTime !== null && (
+          <div style={{ flex: 1 }}>
+            <Stat label="Mean Time to Triage" value={`${Math.round(meanTriageTime)}ms`} color="#00d4ff" icon={<Clock size={14} />} />
           </div>
+        )}
+        {threatVelocity && (
+          <div style={{ flex: 1 }} className="stat threat-velocity">
+            <span><Activity size={12} /> Threat Velocity</span>
+            <strong style={{ color: "#00ff88" }}>{threatVelocity.current || 0}/hr</strong>
+            <div className="velocity-compare">
+              vs <span style={{ color: "#64748b" }}>{threatVelocity.previous_24h || 0}/hr</span> 24h ago
+            </div>
+          </div>
+        )}
+        <div style={{ flex: 1 }}>
+           <Stat label="Active Scans" value="0" color="#a78bfa" icon={<Terminal size={14} />} />
         </div>
-      )}
-      <div className="mini-chart">
-        <ResponsiveContainer width="100%" height={130}>
-          <PieChart>
-            <Pie data={severityData} dataKey="count" nameKey="name" cx="50%" cy="50%" innerRadius={32} outerRadius={52} paddingAngle={3} strokeWidth={0}>
-              {severityData.map((row) => <Cell key={row.name} fill={COLORS[row.name] || "#64748b"} />)}
-            </Pie>
-            <Pie data={[{ value: 1 }]} dataKey="value" cx="50%" cy="50%" innerRadius={0} outerRadius={0} fill="transparent">
-              <Cell fill="transparent" />
-            </Pie>
-            <Tooltip contentStyle={{ background: "#111827", border: "1px solid #1f2937", color: "#e2e8f0", fontFamily: "JetBrains Mono, monospace" }} />
-            <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" fill="#e2e8f0" style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 900, fontSize: "16px" }}>
-              {totalSeverity}
-            </text>
-          </PieChart>
-        </ResponsiveContainer>
       </div>
-      <div className="mini-chart">
-        <ResponsiveContainer width="100%" height={130}>
-          <AreaChart data={analytics?.vulns_over_time || []}>
-            <defs>
-              <linearGradient id="neonGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#00ff88" stopOpacity={0.4} />
-                <stop offset="100%" stopColor="#00ff88" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid stroke="#1f2937" />
-            <XAxis dataKey="day" stroke="#64748b" tick={{ fontSize: 10 }} />
-            <YAxis stroke="#64748b" allowDecimals={false} />
-            <Tooltip contentStyle={{ background: "#111827", border: "1px solid #1f2937", color: "#e2e8f0" }} />
-            <Area type="monotone" dataKey="count" stroke="#00ff88" strokeWidth={2} fill="url(#neonGrad)" dot={false} />
-          </AreaChart>
-        </ResponsiveContainer>
+
+      {/* Row 3: Charts */}
+      <div style={{ display: 'flex', gap: '1rem' }}>
+        <div className="mini-chart" style={{ flex: 1, minHeight: '200px' }}>
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie data={severityData} dataKey="count" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} strokeWidth={0}>
+                {severityData.map((row) => <Cell key={row.name} fill={COLORS[row.name] || "#64748b"} />)}
+              </Pie>
+              <Tooltip contentStyle={{ background: "#111827", border: "1px solid #1f2937", color: "#e2e8f0", fontFamily: "JetBrains Mono, monospace" }} />
+              <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" fill="#e2e8f0" style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 900, fontSize: "24px" }}>
+                {totalSeverity}
+              </text>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="mini-chart" style={{ flex: 1, minHeight: '200px' }}>
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={analytics?.vulns_over_time || []}>
+              <defs>
+                <linearGradient id="neonGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#00ff88" stopOpacity={0.4} />
+                  <stop offset="100%" stopColor="#00ff88" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke="#1f2937" />
+              <XAxis dataKey="day" stroke="#64748b" tick={{ fontSize: 10 }} />
+              <YAxis stroke="#64748b" allowDecimals={false} />
+              <Tooltip contentStyle={{ background: "#111827", border: "1px solid #1f2937", color: "#e2e8f0" }} />
+              <Area type="monotone" dataKey="count" stroke="#00ff88" strokeWidth={2} fill="url(#neonGrad)" dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
       </div>
+
+      {/* Row 4: Benchmarks */}
       {queryBenchmarks && queryBenchmarks.length > 0 && (
         <div className="benchmark-panel">
           <div className="benchmark-title"><Terminal size={14} /> CLICKHOUSE QUERY BENCHMARK</div>
@@ -739,17 +777,107 @@ function AnalyticsBar({ analytics, analyticsExtra }) {
           </div>
         </div>
       )}
+
+      {/* Row 5: Map */}
       <ThreatMap />
-    </section>
+    </div>
   );
 }
 
 /* ─── Stat ────────────────────────────────────────────────── */
 function Stat({ label, value, color, icon }) {
   return (
-    <div className="stat">
+    <div className="stat" style={{ height: '100%' }}>
       <span>{icon} {label}</span>
       <strong style={{ color }}>{value}</strong>
+    </div>
+  );
+}
+
+/* ─── Zone 3: Agent Log Tab ───────────────────────────────── */
+function AgentLogTab() {
+  const { data, loading, error } = useApi("/agent/runs");
+  
+  if (loading) return <div className="scanline">LOADING AGENT LOGS...</div>;
+  if (error) return <div className="error">{error}</div>;
+
+  const runs = data?.items || [];
+  
+  return (
+    <div>
+      <h2 style={{ fontSize: '1rem', color: 'var(--neon)', fontFamily: '"JetBrains Mono", monospace', marginBottom: '1rem' }}>Autonomous Agent Run Log</h2>
+      <table className="agent-log-table">
+        <thead>
+          <tr>
+            <th>TIMESTAMP</th>
+            <th>RUN ID</th>
+            <th>DURATION</th>
+            <th>THREATS</th>
+            <th>MODEL</th>
+            <th>TRACE</th>
+          </tr>
+        </thead>
+        <tbody>
+          {runs.map(run => (
+            <tr key={run.id}>
+              <td>{new Date(run.timestamp).toLocaleString()}</td>
+              <td style={{ color: 'var(--cyan)' }}>{run.id.substring(0, 8)}</td>
+              <td>{run.duration_ms}ms</td>
+              <td><span className="severity-pill" style={{ background: run.threats_found > 0 ? 'var(--critical)' : 'var(--neon)' }}>{run.threats_found}</span></td>
+              <td>{run.model_used}</td>
+              <td>
+                {run.langfuse_trace_id && data.langfuse_host ? (
+                  <a href={`${data.langfuse_host}/trace/${run.langfuse_trace_id}`} target="_blank" rel="noreferrer" style={{ color: 'var(--cyan)', textDecoration: 'none' }}>
+                    View Trace <ExternalLink size={10} />
+                  </a>
+                ) : "-"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ─── Zone 3: CVE Intel Tab ───────────────────────────────── */
+function CveIntelTab() {
+  const [search, setSearch] = useState("");
+  const { data, loading, error } = useApi(`/cves?search=${encodeURIComponent(search)}`);
+  
+  return (
+    <div>
+      <div className="input-row" style={{ marginBottom: '1.5rem' }}>
+        <Search size={22} />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search CVE ID, package name, or description" style={{ width: '400px' }} />
+      </div>
+      
+      {loading ? <div className="scanline">SEARCHING CVE DATABASES...</div> : error ? <div className="error">{error}</div> : (
+        <table className="agent-log-table">
+          <thead>
+            <tr>
+              <th>CVE ID</th>
+              <th>PACKAGE</th>
+              <th>CVSS</th>
+              <th>SEVERITY</th>
+              <th>PUBLISHED</th>
+              <th>AI NOTES</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(data?.items || []).map(cve => (
+              <tr key={cve.cve_id}>
+                <td style={{ color: 'var(--cyan)' }}>{cve.cve_id}</td>
+                <td>{(cve.affected_products || []).join(", ")}</td>
+                <td style={{ color: getCvssColor(cve.cvss_score) }}>{Number(cve.cvss_score).toFixed(1)}</td>
+                <td><span className="severity-pill" style={{ background: getCvssColor(cve.cvss_score) }}>{cve.cvss_score >= 9 ? 'CRITICAL' : cve.cvss_score >= 7 ? 'HIGH' : cve.cvss_score >= 4 ? 'MEDIUM' : 'LOW'}</span></td>
+                <td>{new Date(cve.published_date).toLocaleDateString()}</td>
+                <td style={{ maxWidth: '300px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={cve.ai_triage_notes}>{cve.ai_triage_notes}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
