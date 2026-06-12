@@ -119,7 +119,7 @@ function useAgentStatus() {
         const res = await fetch(`${API}/agent/status`);
         if (res.ok) {
           const data = await res.json();
-          setStatus(data.status || "idle");
+          setStatus(data.running ? "running" : "idle");
         }
       } catch {
         setStatus("idle");
@@ -693,7 +693,7 @@ function AnalyticsTab({ analytics, analyticsExtra }) {
   const severityData = Object.entries(analytics?.severity_counts || {}).map(([name, count]) => ({ name: name.toUpperCase(), count }));
   const totalSeverity = severityData.reduce((sum, d) => sum + d.count, 0);
 
-  const meanTriageTime = analyticsExtra?.mean_triage_time_ms || analyticsExtra?.avg_ai_latency_ms || null;
+  const meanTriageTime = analyticsExtra?.mean_time_to_triage_ms ?? null;
   const threatVelocity = analyticsExtra?.threat_velocity || null;
   const queryBenchmarks = analyticsExtra?.query_benchmarks || null;
 
@@ -709,20 +709,16 @@ function AnalyticsTab({ analytics, analyticsExtra }) {
 
       {/* Row 2: 3 Stats */}
       <div style={{ display: 'flex', gap: '1rem' }}>
-        {meanTriageTime !== null && (
-          <div style={{ flex: 1 }}>
-            <Stat label="Mean Time to Triage" value={`${Math.round(meanTriageTime)}ms`} color="#00d4ff" icon={<Clock size={14} />} />
+        <div style={{ flex: 1 }}>
+          <Stat label="Mean Time to Triage" value={meanTriageTime !== null ? `${Math.round(meanTriageTime)}ms` : "-"} color="#00d4ff" icon={<Clock size={14} />} />
+        </div>
+        <div style={{ flex: 1 }} className="stat threat-velocity">
+          <span><Activity size={12} /> Threat Velocity</span>
+          <strong style={{ color: "#00ff88" }}>{threatVelocity?.current_hour || 0}/hr</strong>
+          <div className="velocity-compare">
+            vs <span style={{ color: "#64748b" }}>{threatVelocity?.same_hour_24h_ago || 0}/hr</span> 24h ago
           </div>
-        )}
-        {threatVelocity && (
-          <div style={{ flex: 1 }} className="stat threat-velocity">
-            <span><Activity size={12} /> Threat Velocity</span>
-            <strong style={{ color: "#00ff88" }}>{threatVelocity.current || 0}/hr</strong>
-            <div className="velocity-compare">
-              vs <span style={{ color: "#64748b" }}>{threatVelocity.previous_24h || 0}/hr</span> 24h ago
-            </div>
-          </div>
-        )}
+        </div>
         <div style={{ flex: 1 }}>
            <Stat label="Active Scans" value="0" color="#a78bfa" icon={<Terminal size={14} />} />
         </div>
@@ -769,9 +765,9 @@ function AnalyticsTab({ analytics, analyticsExtra }) {
           <div className="benchmark-grid">
             {queryBenchmarks.slice(0, 3).map((q, i) => (
               <div key={i} className="benchmark-card">
-                <div className="benchmark-query">{q.query || q.name || `Query ${i + 1}`}</div>
-                <div className="benchmark-time">EXECUTED IN <strong>{q.execution_time_ms || q.time_ms || 0}ms</strong></div>
-                {q.rows_read && <div className="benchmark-rows">{q.rows_read.toLocaleString()} rows</div>}
+                <div className="benchmark-query">{q.name || `Query ${i + 1}`}</div>
+                <div className="benchmark-time">EXECUTED IN <strong>{q.execution_ms || 0}ms</strong></div>
+                {q.result && <div className="benchmark-rows">{q.result.length.toLocaleString()} rows returned</div>}
               </div>
             ))}
           </div>
